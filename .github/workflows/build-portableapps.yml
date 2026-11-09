@@ -11,7 +11,7 @@ on:
       revision:
         description: 'Builder/package revision; increase when code, SDK or packaging changes'
         required: true
-        default: b1r1
+        default: b1r2
         type: string
       publish:
         description: 'Publish after static ZIP and installer verification'

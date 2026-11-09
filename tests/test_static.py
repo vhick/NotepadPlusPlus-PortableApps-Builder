@@ -25,6 +25,31 @@ class ResolverTests(unittest.TestCase):
         body=f'{digest}  npp.8.9.9.portable.x64.zip\n'
         self.assertEqual(npp.parse_checksum(body.encode(),'npp.8.9.9.portable.x64.zip'),digest)
         self.assertIsNone(npp.parse_checksum(body.encode(),'npp.8.9.8.portable.x64.zip'))
+    def test_nonempty_upstream_marker_normalization(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            marker = base/'App'/'doLocalConf.xml'
+            marker.parent.mkdir()
+            payload = b'nonempty upstream marker\n'
+            marker.write_bytes(payload)
+            source = base/'Other'/'Source'
+            info = npp.normalize_portable_marker(marker, source)
+            self.assertEqual(marker.read_bytes(), b'')
+            self.assertEqual((source/'upstream-doLocalConf.xml.original').read_bytes(), payload)
+            self.assertEqual(info['status'], 'normalized-to-empty')
+            self.assertEqual(info['source_size'], len(payload))
+            self.assertEqual(info['source_sha256'], hashlib.sha256(payload).hexdigest())
+
+    def test_empty_or_missing_upstream_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            marker = base/'doLocalConf.xml'
+            source = base/'Source'
+            self.assertEqual(npp.normalize_portable_marker(marker, source)['status'], 'created-empty-marker')
+            self.assertEqual(npp.normalize_portable_marker(marker, source)['status'], 'preserved-empty-marker')
+            self.assertEqual(marker.stat().st_size, 0)
+            self.assertFalse(source.exists())
+
     def test_zip_path_protection(self):
         with tempfile.TemporaryDirectory() as tmp:
             source=Path(tmp)/'bad.zip'

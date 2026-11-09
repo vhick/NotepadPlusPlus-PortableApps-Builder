@@ -32,3 +32,7 @@
 **Evidence distinction:** Public source/manual/release inspection occurred; no interactive local Windows application, installer, plugin manager or shell/notification test occurred during kit authorship. The workflow will fetch the exact source-commit identity and official signed/checksum assets independently when run. Code signing for the unsigned community launcher is not claimed.
 
 **Not implemented (evidence absent):** broad `%APPDATA%`, `%LOCALAPPDATA%`, `%PROGRAMDATA%`, `%TEMP%`, Desktop, Start Menu, HKCU/HKLM or COM scavenging; service/drivers/autostart; cross-process injection; profile sharing; guaranteed portable storage for arbitrary third-party plugins. Every one would require separately observed attribution and owner verification. The selected mode is *not* NATIVE.
+
+### b1r2 compatibility finding
+
+The b1r1 Windows Actions run on 2026-11-09 found a nonempty `doLocalConf.xml` in the checksum-verified official ZIP and rejected it. This marker is documented upstream as an empty portable-mode flag. b1r2 preserves the original file under `Other/Source` and normalizes only the staged package marker. Actual Windows runtime acceptance is pending.

@@ -1,4 +1,4 @@
-# Notepad++ PortableApps Builder b1r1 (unofficial)
+# Notepad++ PortableApps Builder b1r2 (unofficial)
 
 **Selected mode: PORTABLEAPPS ONLY.** This is a complete builder *source kit*, not a precompiled Notepad++ application. It creates an x64 Notepad++ PortableApps-format ZIP and a **custom-NSIS PortableApps-style** `.paf.exe` installer on an unattended GitHub-hosted Windows runner. The installed shared actions remain pinned at `vhick/Portable-Package-Builder@v1.0.0` and `vhick/portable-release-publisher@v1.1.1`. The workflow independently checks each tagged commit's `action.yml` before using it. It never claims PortableApps.com certification.
 
@@ -9,10 +9,10 @@
 1. Sign into GitHub and create a **NEW EMPTY repository** named for example `NotepadPlusPlus-PortableApps-Builder`. Do **not** fork the Notepad++ upstream repository. Choose **Public** or **Private**. A private builder repository should stay private if your build outputs need to remain private.
 2. Open GitHub Desktop and select **File > Clone repository**. Clone the new repository. Do not run `git init` manually.
 3. Extract **the entire contents** of this builder kit ZIP *into the root* of the cloned repository. This includes the hidden `.github/workflows/build-portableapps.yml` folder. Do not put the kit within an extra nested folder.
-4. In GitHub Desktop, inspect the changes, write a commit message (for example `Add Notepad++ PortableApps builder b1r1`), select **Commit to main**, then **Push origin**.
-5. Open the builder repository on github.com, select **Actions > Build Notepad++ PortableApps x64 > Run workflow**. Leave `version` empty for the most recent stable release, or enter `8.9.9` (or another suitable stable upstream version). Leave `revision` at `b1r1` for the original kit, but increase it if you update any builder code or the compiler. Keep `publish` checked to create a GitHub Release after static verification, or uncheck it for a test build without publication.
+4. In GitHub Desktop, inspect the changes, write a commit message (for example `Add Notepad++ PortableApps builder b1r2`), select **Commit to main**, then **Push origin**.
+5. Open the builder repository on github.com, select **Actions > Build Notepad++ PortableApps x64 > Run workflow**. Leave `version` empty for the most recent stable release, or enter `8.9.9` (or another suitable stable upstream version). Leave `revision` at `b1r2` for the original kit, but increase it if you update any builder code or the compiler. Keep `publish` checked to create a GitHub Release after static verification, or uncheck it for a test build without publication.
 6. Review the job logs. Verify stages: **pinned actions**, **real native AOT launcher compilation**, **official Notepad++ SHA-256**, **ZIP validation**, **shared NSIS installer**, **installer static validation**, **publisher dry-run**, then **publication**.
-7. Once successful, go to **Releases** on your builder repository (not Notepad++'s). Locate `portable-npp-v<UPSTREAM_VERSION>-c<SOURCE_SHA8>-b1r1`. Download both `NotepadPlusPlusPortable_<version>_b1r1_win-x64.zip` and, optionally, the `.paf.exe`. Compare their SHA-256 values to the release's `SHA256SUMS.txt` using PowerShell: `Get-FileHash -Algorithm SHA256 "your-file.zip"`.
+7. Once successful, go to **Releases** on your builder repository (not Notepad++'s). Locate `portable-npp-v<UPSTREAM_VERSION>-c<SOURCE_SHA8>-b1r2`. Download both `NotepadPlusPlusPortable_<version>_b1r2_win-x64.zip` and, optionally, the `.paf.exe`. Compare their SHA-256 values to the release's `SHA256SUMS.txt` using PowerShell: `Get-FileHash -Algorithm SHA256 "your-file.zip"`.
 8. Extract the ZIP keeping the **NotepadPlusPlusPortable** folder intact, preferably under your `PortableApps` directory or a writable USB drive. **Or** run the community `.paf.exe` installer, choose a writable folder, and refresh the PortableApps Platform menu.
 9. Run the genuine compiled **`NotepadPlusPlusPortable.exe`** from the folder root, **not** `App\Notepad++\notepad++.exe` (which bypasses the launcher and recovery lifecycle). You can pass a filename from the command line. Do not open multiple copies of the same portable package; the launcher prevents conflicting concurrent sessions.
 10. When upgrading, **close Notepad++ completely using the launcher**, back up **the entire `NotepadPlusPlusPortable` folder**, and install/extract the new package into the same location **without replacing `Data`**. The shared NSIS installer preserves `Data` by design but replaces `App`/`Other` and the root launcher. For ZIP upgrades, copy the new `App`, `Other` and root launcher into the existing directory, leaving `Data` untouched. Do **not** delete it. For rollback, use your prior package plus the *backup of its matching Data directory*, since configuration schema changes may make old versions incompatible.
@@ -70,11 +70,16 @@ NotepadPlusPlusPortable/
 - Publisher dry-run runs before publication, and `keep-releases=3`, `prune=false` by default. The shared publisher refuses overwrites when published assets differ. Publication uses only this builder's `GITHUB_TOKEN`, to this builder repository.
 - For repeat builds, use the workflow `revision` input to choose a new builder/package revision if code/toolchain changes the binary even though the upstream version remains identical. The publishing action deliberately prevents silent replacement of existing release bytes.
 
+## b1r2 fix: upstream nonempty local-configuration marker
+
+The first real Windows GitHub Actions run compiled the x64 NativeAOT launcher and verified Notepad++'s archive checksum, but stopped in packaging because the upstream `doLocalConf.xml` was not zero bytes. The file is a zero-byte portable-mode **flag** per Notepad++'s documentation; it is not a configuration document requiring XML parsing. b1r2 saves the original bytes in `Other/Source/upstream-doLocalConf.xml.original`, records their size and SHA-256 in `PROVENANCE.json`, and makes only the staged file an empty marker. The official downloaded ZIP is never edited. Two regression tests cover missing, empty and nonempty cases. GitHub Actions/Windows runtime acceptance of this fix is still pending.
+
 ## Troubleshooting
 
 | Symptom | What to do |
 |---|---|
 | `No numeric stable release found` | Check GitHub upstream API reachability and rate limits. API errors are not treated as missing releases. |
+| `Official release contains nonempty doLocalConf.xml` | b1r1-only issue. Replace the builder kit with b1r2. It preserves the original marker and makes a valid empty marker inside staging. |
 | `SHA256 MISMATCH` | Do not run the archive. The builder aborts and deletes the invalid download. Review official upstream release assets. |
 | `NativeAOT launcher compilation failed` | Check `dotnet publish` logs in Actions. Ensure Windows 2022 hosted image provides C++ linker/SDK; the kit does not fall back to scripts or disguised EXEs. |
 | `shared action tag commit unexpectedly changed` | The pinned tag is not the previously inspected revision. Stop, audit the new version and intentionally revise the kit. |

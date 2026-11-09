@@ -39,3 +39,11 @@
 - Windows launcher binaries built from source here are unsigned community executables; they are not Notepad++ upstream signatures or official PortableApps.com certified installers.
 - An official detached signature is not validated without a verified, pinned upstream signing key. Official SHA-256 checksum-file verification is implemented and required.
 - Build toolchain `8.0.x` patch version floats with hosted SDK image and is recorded in provenance; choose a new builder revision when SDK or builder code changes.
+
+## November 9, 2026: b1r1 Windows failure and b1r2 remediation
+
+- **WINDOWS-COMPILED:** b1r1 produced the actual NativeAOT launcher successfully (GitHub Actions Windows-2022 runner, step 5).
+- **SOURCE/CHECKSUM:** b1r1 reached staged marker validation after downloading and checking the official archive digest (step 6).
+- **FAILED/BLOCKED:** b1r1 rejected the nonempty `doLocalConf.xml` in the official archive.
+- **STATIC-VALIDATED:** b1r2 preserves marker bytes and their SHA-256 for attribution, creates a zero-byte marker only in staging, and adds unit tests.
+- **NOT YET VERIFIED:** b1r2 Windows Actions run, Notepad++ GUI portability, custom NSIS installer, and publication.

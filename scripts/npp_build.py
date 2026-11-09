@@ -25,7 +25,7 @@ STABLE_TAG = re.compile(r"^v?(\d+(?:\.\d+){2,3})$")
 ASSET_RE = re.compile(r"^npp\.(\d+(?:\.\d+){2,3})\.portable\.x64\.zip$", re.I)
 APP_ID = "NotepadPlusPlusCommunityPortable"
 ROOT = "NotepadPlusPlusPortable"
-BUILDER = "b1r1"
+BUILDER = "b1r2"
 
 
 def semver(version: str) -> tuple[int, ...]:
@@ -222,6 +222,40 @@ def create_zip(source: Path, target: Path):
             raise RuntimeError("Generated ZIP checksum failure: " + bad)
 
 
+
+def normalize_portable_marker(marker: Path, attribution: Path) -> dict:
+    """Preserve an upstream nonempty marker and normalize only the staged copy.
+
+    The official Notepad++ docs define doLocalConf.xml as a zero-byte mode flag.
+    Never edit the SHA-256-verified upstream archive or existing user Data.
+    """
+    if marker.is_symlink() or (marker.exists() and not marker.is_file()):
+        raise ValueError("Invalid upstream portable marker type: " + str(marker))
+    if not marker.exists():
+        marker.write_bytes(b"")
+        return {"status": "created-empty-marker", "source_size": 0}
+    size = marker.stat().st_size
+    if size == 0:
+        return {"status": "preserved-empty-marker", "source_size": 0}
+    if size > 1024 * 1024:
+        raise ValueError("Unexpectedly large upstream portable marker: " + str(size))
+    original = marker.read_bytes()
+    original_sha = hashlib.sha256(original).hexdigest()
+    attribution.mkdir(parents=True, exist_ok=True)
+    saved = attribution / "upstream-doLocalConf.xml.original"
+    if saved.exists():
+        raise ValueError("Source marker evidence would overwrite a staged file")
+    saved.write_bytes(original)
+    if sha256(saved) != original_sha:
+        raise RuntimeError("Saved upstream portable-marker verification failed")
+    marker.write_bytes(b"")
+    if marker.stat().st_size != 0:
+        raise RuntimeError("Failed to create zero-byte staged portable marker")
+    return {"status": "normalized-to-empty", "source_size": size,
+            "source_sha256": original_sha,
+            "source_backup": "Other/Source/upstream-doLocalConf.xml.original"}
+
+
 def validate_package(root: Path, zip_path: Path, version: str):
     mainexe = root / "App" / "Notepad++" / "notepad++.exe"
     launcher = root / "NotepadPlusPlusPortable.exe"
@@ -302,10 +336,8 @@ def build(args):
     if pe_machine(appdir / "notepad++.exe") != 0x8664:
         raise RuntimeError("Official Notepad++ release is not x64")
     marker = appdir / "doLocalConf.xml"
-    if not marker.exists():
-        marker.write_bytes(b"")
-    elif marker.stat().st_size:
-        raise RuntimeError("Official release contains nonempty doLocalConf.xml")
+    marker_evidence = normalize_portable_marker(marker, stage / "Other" / "Source")
+    print("Upstream portable marker (staged copy only):", json.dumps(marker_evidence), flush=True)
     # Fresh profile is ALWAYS Data. No defaults are copied on upgrades.
     for folder in ["Settings", "PluginConfig", "PluginsBackup", "LegacyIniBackup", "Recovery/Conflicts"]:
         (stage / "Data" / folder).mkdir(parents=True, exist_ok=True)
@@ -338,6 +370,7 @@ def build(args):
         "compiler_sdk": os.getenv("DOTNET_SDK_VERSION", "unknown"),
         "installer_engine": "custom-nsis", "data_strategy": "-settingsDir Data/Settings plus package-local plugin backup",
         "notes": "Source binary is official developer portable ZIP, NOT rebuilt from source",
+        "portable_marker": marker_evidence,
     }
     (stage / "Other" / "Source" / "PROVENANCE.json").write_text(json.dumps(identity, indent=2) + "\n", encoding="utf-8")
     output = Path(args.output).resolve()
