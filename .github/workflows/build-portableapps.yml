@@ -1,0 +1,150 @@
+name: Build Notepad++ PortableApps x64
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Stable Notepad++ version (blank = latest stable)'
+        required: false
+        default: ''
+        type: string
+      revision:
+        description: 'Builder/package revision; increase when code, SDK or packaging changes'
+        required: true
+        default: b1r1
+        type: string
+      publish:
+        description: 'Publish after static ZIP and installer verification'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: npp-portableapps-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 55
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out dedicated builder repository
+        uses: actions/checkout@v4
+
+      - name: Validate kit and pinned shared-action commit/interface
+        shell: pwsh
+        run: |
+          python scripts/validate_kit.py
+          if ($LASTEXITCODE -ne 0) { throw 'Builder kit validation failed' }
+          python scripts/verify_shared_actions.py
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned action verification failed' }
+          python -m unittest discover -s tests -v
+          if ($LASTEXITCODE -ne 0) { throw 'Static unit tests failed' }
+
+      - name: Setup .NET 8 compiler
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Compile genuine x64 native AOT Windows launcher
+        shell: pwsh
+        run: |
+          $sdk = (& dotnet --version).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet SDK unavailable' }
+          "DOTNET_SDK_VERSION=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          dotnet publish launcher/NotepadPlusPlusPortable.csproj -c Release -r win-x64 --self-contained true -p:PublishAot=true -o build/launcher
+          if ($LASTEXITCODE -ne 0) { throw 'NativeAOT launcher compilation failed' }
+          if (-not (Test-Path -LiteralPath 'build/launcher/NotepadPlusPlusPortable.exe')) { throw 'Compiled launcher EXE missing' }
+
+      - name: Discover stable upstream, verify official SHA-256, stage and validate ZIP
+        id: build
+        shell: pwsh
+        env:
+          NPP_VERSION: ${{ inputs.version }}
+          NPP_REVISION: ${{ inputs.revision }}
+        run: |
+          python scripts/npp_build.py --version "$env:NPP_VERSION" --revision "$env:NPP_REVISION" --work build --output dist --launcher build/launcher/NotepadPlusPlusPortable.exe
+          if ($LASTEXITCODE -ne 0) { throw 'PortableApps ZIP build failed' }
+          $meta = Get-Content -LiteralPath 'build/result.json' -Raw -Encoding utf8 | ConvertFrom-Json
+          "release_tag=$($meta.release_tag)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "app_version=$($meta.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "stage_dir=$($meta.stage_dir)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "zip_name=$($meta.zip_name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Upstream: $($meta.tag) commit $($meta.commit); official asset SHA256 $($meta.sha256_asset)"
+          Write-Host "Independently validated ZIP: $($meta.zip_name) SHA256 $($meta.zip_sha256)"
+
+      - name: Build installer via pinned shared Package Builder (NOT official PortableApps.com Installer)
+        id: installer
+        continue-on-error: true
+        uses: vhick/Portable-Package-Builder@v1.0.0
+        with:
+          source-dir: ${{ steps.build.outputs.stage_dir }}
+          output-dir: dist
+          engine: custom-nsis
+          running-exe: App\Notepad++\notepad++.exe
+          timeout-seconds: '900'
+          package-revision: ${{ inputs.revision }}
+
+      - name: Retain complete validated ZIP if shared installer fails
+        if: ${{ steps.installer.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: validated-notepadplusplus-zip-installer-failed
+          path: dist/NotepadPlusPlusPortable_*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Fail safely if shared installer generation failed
+        if: ${{ steps.installer.outcome == 'failure' }}
+        shell: pwsh
+        run: throw 'Installer failed. Validated ZIP preserved as a workflow artifact. No release was published.'
+
+      - name: Independently verify NSIS PE, 7-Zip archive, member names and SHA-256
+        shell: pwsh
+        env:
+          NPP_INSTALLER_PATH: ${{ steps.installer.outputs.installer-file }}
+          NPP_INSTALLER_SHA: ${{ steps.installer.outputs.installer-sha256 }}
+        run: |
+          if (-not $env:NPP_INSTALLER_PATH) { throw 'Shared installer did not return a path' }
+          python scripts/validate_installer.py --installer "$env:NPP_INSTALLER_PATH"
+          if ($LASTEXITCODE -ne 0) { throw 'Independent installer static validation failed' }
+          $actual = (Get-FileHash -LiteralPath $env:NPP_INSTALLER_PATH -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:NPP_INSTALLER_SHA.ToLowerInvariant()) { throw 'Shared-action installer SHA-256 mismatch' }
+
+      - name: Shared publisher dry run - required before publication
+        uses: vhick/portable-release-publisher@v1.1.1
+        with:
+          files: 'dist/NotepadPlusPlusPortable_*.zip;dist/*.paf.exe'
+          tag: ${{ steps.build.outputs.release_tag }}
+          release-title: Notepad++ Portable Community ${{ steps.build.outputs.app_version }} (${{ inputs.revision }})
+          tag-prefix: portable-npp-
+          keep-releases: '3'
+          prune: 'false'
+          dry-run: 'true'
+
+      - name: Publish only if requested, through pinned shared publisher
+        if: ${{ inputs.publish }}
+        uses: vhick/portable-release-publisher@v1.1.1
+        with:
+          files: 'dist/NotepadPlusPlusPortable_*.zip;dist/*.paf.exe'
+          tag: ${{ steps.build.outputs.release_tag }}
+          release-title: Notepad++ Portable Community ${{ steps.build.outputs.app_version }} (${{ inputs.revision }})
+          tag-prefix: portable-npp-
+          keep-releases: '3'
+          prune: 'false'
+          dry-run: 'false'
+
+      - name: Print independent verification status
+        shell: pwsh
+        run: |
+          Write-Host 'SOURCE/CHECKSUM: verified at run time.'
+          Write-Host 'WINDOWS-COMPILED: passed when NativeAOT compilation step succeeds.'
+          Write-Host 'PORTABLEAPPS ZIP/INSTALLER: static validated only.'
+          Write-Host 'GUI launch/notifications/installed-app coexistence/installer upgrades: NOT tested on desktop by CI.'

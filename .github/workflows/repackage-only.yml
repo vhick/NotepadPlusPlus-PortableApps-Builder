@@ -1,0 +1,120 @@
+name: Repackage existing validated Notepad++ ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_release_tag:
+        description: 'Existing release tag from this repository containing validated NotepadPlusPlusPortable ZIP'
+        required: true
+        type: string
+      installer_revision:
+        description: 'New packaging revision (for example re2; must differ for new output)'
+        required: true
+        default: re2
+        type: string
+      publish:
+        description: 'Publish newly generated installer plus original verified ZIP'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: npp-portableapps-release
+  cancel-in-progress: false
+
+jobs:
+  repackage:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate pinned action definitions and kit
+        shell: pwsh
+        run: |
+          python scripts/validate_kit.py
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid kit' }
+          python scripts/verify_shared_actions.py
+          if ($LASTEXITCODE -ne 0) { throw 'Shared action mismatch' }
+      - name: Download only a previous publisher-owned release from this builder repository
+        shell: pwsh
+        env:
+          SOURCE_RELEASE_TAG: ${{ inputs.source_release_tag }}
+        run: |
+          $info = & gh release view "$env:SOURCE_RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --json 'body,isDraft,isImmutable,assets' | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot access source release' }
+          if ($info.isDraft) { throw 'Source release remains a draft' }
+          if (-not $info.body.Contains('<!-- portable-release-publisher:managed:v2 -->')) { throw 'Source release not owned by pinned publisher' }
+          New-Item -ItemType Directory -Force -Path 'build/source' | Out-Null
+          & gh release download "$env:SOURCE_RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" --pattern 'NotepadPlusPlusPortable_*.zip' --pattern 'SHA256SUMS.txt' --dir 'build/source'
+          if ($LASTEXITCODE -ne 0) { throw 'Source ZIP download failed' }
+          $zips = @(Get-ChildItem -LiteralPath 'build/source' -Filter 'NotepadPlusPlusPortable_*.zip' -File)
+          if ($zips.Count -ne 1) { throw 'Exactly one validated source ZIP is required' }
+      - name: Validate exact previous ZIP bytes, preserve provenance and stage without build
+        id: stage
+        shell: pwsh
+        env:
+          REVISION: ${{ inputs.installer_revision }}
+        run: |
+          $zip = @(Get-ChildItem -LiteralPath 'build/source' -Filter 'NotepadPlusPlusPortable_*.zip' -File)[0].FullName
+          python scripts/repackage.py --zip "$zip" --checksums build/source/SHA256SUMS.txt --work build --output dist --revision "$env:REVISION"
+          if ($LASTEXITCODE -ne 0) { throw 'Source release verification failed' }
+          $meta = Get-Content -LiteralPath 'build/repackage-result.json' -Raw -Encoding utf8 | ConvertFrom-Json
+          "tag=$($meta.tag)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "stage_dir=$($meta.stage_dir)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "version=$($meta.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Pinned shared installer generation - ZIP already validated
+        id: installer
+        continue-on-error: true
+        uses: vhick/Portable-Package-Builder@v1.0.0
+        with:
+          source-dir: ${{ steps.stage.outputs.stage_dir }}
+          output-dir: dist
+          engine: custom-nsis
+          running-exe: App\Notepad++\notepad++.exe
+          timeout-seconds: '900'
+          package-revision: ${{ inputs.installer_revision }}
+      - if: ${{ steps.installer.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-original-zip-repackage-failed
+          path: dist/NotepadPlusPlusPortable_*.zip
+          if-no-files-found: error
+          retention-days: 7
+      - if: ${{ steps.installer.outcome == 'failure' }}
+        shell: pwsh
+        run: throw 'Packaging-only installer failed; source ZIP retained, no release published.'
+      - name: Independent installer validation
+        shell: pwsh
+        env:
+          INSTALLER: ${{ steps.installer.outputs.installer-file }}
+        run: |
+          python scripts/validate_installer.py --installer "$env:INSTALLER"
+          if ($LASTEXITCODE -ne 0) { throw 'Installer static verification failed' }
+      - name: Preview with pinned shared publisher
+        uses: vhick/portable-release-publisher@v1.1.1
+        with:
+          files: 'dist/NotepadPlusPlusPortable_*.zip;dist/*.paf.exe'
+          tag: ${{ steps.stage.outputs.tag }}
+          release-title: Notepad++ Portable ${{ steps.stage.outputs.version }} (repackage ${{ inputs.installer_revision }})
+          tag-prefix: portable-npp-
+          keep-releases: '3'
+          prune: 'false'
+          dry-run: 'true'
+      - name: Publish validated existing ZIP and new installer
+        if: ${{ inputs.publish }}
+        uses: vhick/portable-release-publisher@v1.1.1
+        with:
+          files: 'dist/NotepadPlusPlusPortable_*.zip;dist/*.paf.exe'
+          tag: ${{ steps.stage.outputs.tag }}
+          release-title: Notepad++ Portable ${{ steps.stage.outputs.version }} (repackage ${{ inputs.installer_revision }})
+          tag-prefix: portable-npp-
+          keep-releases: '3'
+          prune: 'false'
+          dry-run: 'false'
