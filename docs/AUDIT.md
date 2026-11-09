@@ -36,3 +36,7 @@
 ### b1r2 compatibility finding
 
 The b1r1 Windows Actions run on 2026-11-09 found a nonempty `doLocalConf.xml` in the checksum-verified official ZIP and rejected it. This marker is documented upstream as an empty portable-mode flag. b1r2 preserves the original file under `Other/Source` and normalizes only the staged package marker. Actual Windows runtime acceptance is pending.
+
+### b1r3 packaging-state finding
+
+**LOG-OBSERVED (2026-11-09):** The b1r2 action run failed at `scripts/npp_build.py:344`, after `normalize_portable_marker` had successfully created `Other/Source` and backed up the original 308-byte upstream `doLocalConf.xml`. Recreating that folder without `exist_ok=True` fails on Windows with `FileExistsError [WinError 183]`. The b1r3 change is confined to idempotent creation of the package's `Other/Source` directory; application runtime behavior and the pinned shared actions are unchanged. An offline fixture reproduces the normal marker → backup → staging → package sequence to prevent recurrence.

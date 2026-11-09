@@ -25,7 +25,7 @@ STABLE_TAG = re.compile(r"^v?(\d+(?:\.\d+){2,3})$")
 ASSET_RE = re.compile(r"^npp\.(\d+(?:\.\d+){2,3})\.portable\.x64\.zip$", re.I)
 APP_ID = "NotepadPlusPlusCommunityPortable"
 ROOT = "NotepadPlusPlusPortable"
-BUILDER = "b1r2"
+BUILDER = "b1r3"
 
 
 def semver(version: str) -> tuple[int, ...]:
@@ -341,7 +341,9 @@ def build(args):
     # Fresh profile is ALWAYS Data. No defaults are copied on upgrades.
     for folder in ["Settings", "PluginConfig", "PluginsBackup", "LegacyIniBackup", "Recovery/Conflicts"]:
         (stage / "Data" / folder).mkdir(parents=True, exist_ok=True)
-    (stage / "Other" / "Source").mkdir(parents=True)
+    # normalize_portable_marker() can have already created Other/Source.
+    # Directory creation must be idempotent and must never delete saved evidence.
+    (stage / "Other" / "Source").mkdir(parents=True, exist_ok=True)
     shutil.copy2(args.launcher, stage / "NotepadPlusPlusPortable.exe")
     if pe_machine(stage / "NotepadPlusPlusPortable.exe") != 0x8664:
         raise RuntimeError("Launcher is not a genuine Windows x64 PE")

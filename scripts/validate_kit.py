@@ -7,7 +7,7 @@ files=[
     "launcher/Program.cs","scripts/npp_build.py","scripts/verify_shared_actions.py",
     "scripts/extract_icons.ps1","scripts/validate_installer.py","scripts/repackage.py","README.md",
     "docs/ACCEPTANCE.md","docs/AUDIT.md","docs/DATA-SAFETY.md","docs/STATUS.md",
-    "licenses/GPL-3.0.txt","licenses/MIT-LAUNCHER.txt",
+    "licenses/GPL-3.0.txt","licenses/MIT-LAUNCHER.txt","CHANGELOG.md",
 ]
 for x in files:
     if not (base/x).is_file():raise RuntimeError("Missing kit file: "+x)

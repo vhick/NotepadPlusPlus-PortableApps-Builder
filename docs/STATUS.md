@@ -15,7 +15,7 @@
 | Independent generated ZIP metadata | STATIC-VALIDATED | Synthetic ZIP content, CRC and repeated-output equality tested |
 | Workflow syntax | STATIC-VALIDATED | Both workflows parsed as YAML in authoring environment; GitHub Actions runner not invoked |
 | Launcher C# source | STATIC-VALIDATED | Program and csproj created; not compiled on Windows in authoring environment |
-| Windows x64 NativeAOT executable | NOT YET VERIFIED | Compilation is a mandatory step when Actions runs |
+| Windows x64 NativeAOT executable | WINDOWS-COMPILED (b1r1, b1r2) | GitHub Actions Windows runner compiled genuine NativeAOT launcher; b1r3 unchanged launcher, not yet run |
 | Real NPP portable archive download and checksum | NOT YET VERIFIED | Version-specific official SHA will be checked by the workflow when run |
 | Real PortableApps ZIP | NOT YET VERIFIED | Produced only after actual launcher compile and official asset staging in CI |
 | Package-local configuration runtime | NOT YET VERIFIED | Requires actual Notepad++ GUI launch on Windows |
@@ -46,4 +46,12 @@
 - **SOURCE/CHECKSUM:** b1r1 reached staged marker validation after downloading and checking the official archive digest (step 6).
 - **FAILED/BLOCKED:** b1r1 rejected the nonempty `doLocalConf.xml` in the official archive.
 - **STATIC-VALIDATED:** b1r2 preserves marker bytes and their SHA-256 for attribution, creates a zero-byte marker only in staging, and adds unit tests.
-- **NOT YET VERIFIED:** b1r2 Windows Actions run, Notepad++ GUI portability, custom NSIS installer, and publication.
+- **WINDOWS-COMPILED / FAILED:** b1r2 compiled the x64 launcher and normalized the marker; staging then failed at `scripts/npp_build.py:344` with `[WinError 183]` because `Other/Source` already existed. Notepad++ GUI portability, custom NSIS installer, and publication remain unverified.
+
+## November 9, 2026: b1r3 Source-directory collision remediation
+
+- **Log-confirmed b1r2 blocker:** `normalize_portable_marker()` created `Other/Source` to preserve original marker bytes; a subsequent `mkdir(parents=True)` at script line 344 raised `FileExistsError` on Windows.
+- **STATIC-VALIDATED b1r3:** use `mkdir(parents=True, exist_ok=True)` so staging reuses the already-created directory. No upstream asset, app binary, marker backup, or user `Data` is removed.
+- **OFFLINE INTEGRATION TEST:** controlled fixture ran real packaging/staging/ZIP/checksum/provenance pipeline twice and asserted marker backup and stable ZIP hash; it deliberately mocks the network source, x64 PE inputs, and Windows-only icon extraction.
+- **WINDOWS-COMPILED:** earlier b1r2 launcher compiled on GitHub Actions; b1r3 full Windows Actions run is **NOT YET VERIFIED**.
+- **NOT YET VERIFIED:** real Notepad++ GUI runtime, plugin recovery on Windows, custom NSIS installer generation/installation, release publication.

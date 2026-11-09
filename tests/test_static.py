@@ -50,6 +50,77 @@ class ResolverTests(unittest.TestCase):
             self.assertEqual(marker.stat().st_size, 0)
             self.assertFalse(source.exists())
 
+    def test_offline_staging_pipeline_nonempty_marker(self):
+        """Regression for b1r2 WinError 183: normalization creates Other/Source first.
+
+        Exercises the real stage/ZIP/PROVENANCE/validation pipeline, with only
+        the network request, Windows PE inputs and icon extractor substituted
+        by controlled fixtures; it is NOT a Windows runtime test.
+        """
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import json
+        import struct
+
+        def dummy_x64_pe():
+            raw = bytearray(128)
+            raw[0:2] = b'MZ'
+            struct.pack_into('<I', raw, 60, 64)
+            raw[64:68] = b'PE\0\0'
+            struct.pack_into('<H', raw, 68, 0x8664)
+            return bytes(raw)
+
+        def controlled_icons(_exe, appinfo):
+            # Only mock unavailable Windows resource extraction. ZIP checks
+            # remain real; images are fixtures, not distributable outputs.
+            (appinfo/'appicon.ico').write_bytes(b'\0\0\1\0fixture')
+            png = b'\x89PNG\r\n\x1a\nfixture'
+            (appinfo/'appicon_16.png').write_bytes(png)
+            (appinfo/'appicon_32.png').write_bytes(png)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            work = base/'build'
+            work.mkdir()
+            version = '8.9.9'
+            asset = f'npp.{version}.portable.x64.zip'
+            archive = work/asset
+            payload = b'upstream marker with nonzero bytes'
+            with zipfile.ZipFile(archive, 'w') as z:
+                z.writestr('notepad++.exe', dummy_x64_pe())
+                z.writestr('doLocalConf.xml', payload)
+                z.writestr('plugins/config/empty/', b'')
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            checksums = f'{digest}  {asset}\n'.encode('ascii')
+            launcher = base/'NotepadPlusPlusPortable.exe'
+            launcher.write_bytes(dummy_x64_pe())
+            release = {
+                'tag_name': 'v'+version,
+                'body': '',
+                'assets': [
+                    {'name':asset, 'browser_download_url':'https://example.invalid/asset', 'digest':'sha256:'+digest},
+                    {'name':f'npp.{version}.checksums.sha256', 'browser_download_url':'https://example.invalid/checksums'},
+                ],
+            }
+            args = SimpleNamespace(version='', revision='b1r3', work=str(work),
+                                   output=str(base/'dist'), launcher=str(launcher))
+            with patch.object(npp, 'get_release', return_value=release), \
+                 patch.object(npp, 'dereference_tag', return_value='a'*40), \
+                 patch.object(npp, 'gh_request', return_value=checksums), \
+                 patch.object(npp, 'copy_packaged_icons', side_effect=controlled_icons):
+                first = npp.build(args)
+                pkg = Path(first['stage_dir'])
+                self.assertEqual((pkg/'App'/'Notepad++'/'doLocalConf.xml').read_bytes(), b'')
+                self.assertEqual((pkg/'Other'/'Source'/'upstream-doLocalConf.xml.original').read_bytes(), payload)
+                self.assertTrue((pkg/'Other'/'Source'/'PROVENANCE.json').is_file())
+                self.assertEqual(json.loads((pkg/'Other'/'Source'/'PROVENANCE.json').read_text())['builder_revision'], 'b1r3')
+                with zipfile.ZipFile(first['zip_path']) as z:
+                    self.assertIn(f'{npp.ROOT}/App/Notepad++/plugins/config/empty/', z.namelist())
+                    self.assertIsNone(z.testzip())
+                # Identical inputs produce identical ZIP bytes even on a clean rebuild.
+                second = npp.build(args)
+                self.assertEqual(first['zip_sha256'], second['zip_sha256'])
+
     def test_zip_path_protection(self):
         with tempfile.TemporaryDirectory() as tmp:
             source=Path(tmp)/'bad.zip'
